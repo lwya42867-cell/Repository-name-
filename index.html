@@ -4,36 +4,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>منظومة المراقبة الشرق الأوسط</title>
-    <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
-    <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <!-- استدعاء مكتبة Leaflet الخفيفة -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
     <style>
         body { margin: 0; padding: 0; background-color: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
-        
-        /* جعل الخريطة داكنة باستخدام فلتر CSS */
-        #cesiumContainer { width: 100%; height: 100vh; filter: invert(100%) grayscale(100%) contrast(1.2) hue-rotate(180deg); }
+        #map { width: 100vw; height: 100vh; background: #000; }
         
         /* واجهة الهاكر (HUD) */
         #hud {
             position: absolute; top: 20px; right: 20px;
-            background: rgba(0, 20, 0, 0.9); border: 1px solid #0f0;
-            padding: 15px; color: #0f0; z-index: 999; text-align: right;
+            background: rgba(0, 20, 0, 0.85); border: 1px solid #0f0;
+            padding: 15px; color: #0f0; z-index: 1000; text-align: right;
             box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
-            pointer-events: none; border-radius: 5px; min-width: 200px;
+            border-radius: 5px; pointer-events: none;
         }
-        #hud h1 { margin: 0 0 10px 0; font-size: 18px; text-transform: uppercase; letter-spacing: 2px; }
+        #hud h1 { margin: 0 0 10px 0; font-size: 16px; text-transform: uppercase; }
         .data-row { font-size: 12px; margin-bottom: 5px; }
         .data-row span { color: #fff; }
         
-        /* تأثير خط المسح (Scanline) */
+        /* تأثير خط المسح */
         .scanline {
             position: absolute; top: 0; left: 0; width: 100%; height: 100px;
             background: linear-gradient(to bottom, rgba(0,255,0,0) 0%, rgba(0,255,0,0.1) 50%, rgba(0,255,0,0) 100%);
-            animation: scan 6s linear infinite; z-index: 998; pointer-events: none;
+            animation: scan 6s linear infinite; z-index: 999; pointer-events: none;
         }
-        @keyframes scan {
-            0% { top: -100px; }
-            100% { top: 100%; }
-        }
+        @keyframes scan { 0% { top: -100px; } 100% { top: 100%; } }
+
+        /* تنسيق الأيقونات (الطائرات والكاميرات) */
+        .plane-icon { font-size: 16px; text-shadow: 0 0 5px #0ff; }
+        .cam-icon { font-size: 16px; text-shadow: 0 0 5px #0f0; }
+        
+        /* تخصيص نافذة الكاميرا المنبثقة */
+        .leaflet-popup-content-wrapper { background: #000; color: #0f0; border: 1px solid #0f0; border-radius: 5px; }
+        .leaflet-popup-tip { background: #0f0; }
+        .leaflet-popup-content img { border: 1px solid #0f0; max-width: 100%; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -43,37 +50,26 @@
         <div class="data-row">المنطقة: <span>الشرق الأوسط</span></div>
         <div class="data-row">الطائرات: <span id="plane-count">جاري الاتصال...</span></div>
         <div class="data-row">الكاميرات: <span id="cam-count">جاري الاتصال...</span></div>
-        <div class="data-row">الحالة: <span>مراقبة حية</span></div>
     </div>
-    <div id="cesiumContainer"></div>
+    
+    <div id="map"></div>
 
     <script>
-        // 1. تهيئة الكرة الأرضية
-        const viewer = new Cesium.Viewer('cesiumContainer', {
-            baseLayerPicker: false,
-            timeline: false, animation: false, geocoder: false, 
-            homeButton: true, sceneModePicker: false,
-            navigationHelpButton: false, infoBox: true
-        });
+        // 1. تهيئة الخريطة (الشرق الأوسط)
+        var map = L.map('map', { zoomControl: false }).setView([30.0, 45.0], 5);
+        
+        // استخدام خريطة داكنة (Dark Matter) لتبدو كشاشة هاكر
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CartoDB',
+            subdomains: 'abcd',
+            maxZoom: 19
+        }).addTo(map);
 
-        // استخدام خريطة OpenStreetMap العادية (سيتم عكس ألوانها لتصبح داكنة عبر CSS)
-        const osmLayer = new Cesium.ImageryLayer(new Cesium.UrlTemplateImageryProvider({
-            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            credit: 'OpenStreetMap'
-        }));
-        viewer.imageryLayers.add(osmLayer);
-
-        // ضبط الكاميرا على الشرق الأوسط
-        viewer.camera.setView({
-            destination: Cesium.Cartesian3.fromDegrees(45.0, 30.0, 3000000)
-        });
-
-        // 2. جلب الطائرات (OpenSky)
+        // 2. جلب الطائرات
         async function fetchFlights() {
             const el = document.getElementById('plane-count');
             try {
                 const res = await fetch('https://opensky-network.org/api/states/all?lamin=12&lomin=35&lamax=42&lomax=60');
-                if (!res.ok) throw new Error("API Blocked");
                 const data = await res.json();
                 let count = 0;
                 if (data.states) {
@@ -81,27 +77,17 @@
                         const [icao, callsign, origin, lon, lat, alt] = state;
                         if (lat && lon) {
                             count++;
-                            viewer.entities.add({
-                                position: Cesium.Cartesian3.fromDegrees(lon, lat, alt || 10000),
-                                point: { pixelSize: 6, color: Cesium.Color.RED }, // أحمر ليتم عكسه للون الأزرق
-                                label: {
-                                    text: callsign ? callsign.trim() : '✈️',
-                                    font: '10px monospace', fillColor: Cesium.Color.RED,
-                                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                                    pixelOffset: new Cesium.Cartesian2(0, -10)
-                                }
-                            });
+                            L.marker([lat, lon], {
+                                icon: L.divIcon({ className: 'plane-icon', html: '✈️', iconSize: [20, 20] })
+                            }).bindPopup(`<b>رحلة: ${callsign ? callsign.trim() : 'غير معروف'}</b><br>الارتفاع: ${alt}m`).addTo(map);
                         }
                     });
                 }
                 el.innerText = count + ' طائرة';
-            } catch (e) { 
-                el.innerText = 'تعذر الجلب (تجاوز الحد)'; 
-            }
+            } catch (e) { el.innerText = 'تعذر الجلب'; }
         }
 
-        // 3. جلب الكاميرات (Windy API)
+        // 3. جلب الكاميرات
         const WINDY_API_KEY = "1KJaSrk7x4uofCDDGsZXds7SGhcsuzX2"; 
         const BBOX = "42.1,55.7,16.3,25.6"; 
 
@@ -109,10 +95,7 @@
             const el = document.getElementById('cam-count');
             try {
                 const url = `https://api.windy.com/webcams/api/v3/webcams?bbox=${BBOX}&limit=100&include=images,location&lang=ar`;
-                const res = await fetch(url, {
-                    headers: { 'x-windy-api-key': WINDY_API_KEY }
-                });
-                if (!res.ok) throw new Error("Windy Blocked");
+                const res = await fetch(url, { headers: { 'x-windy-api-key': WINDY_API_KEY } });
                 const data = await res.json();
                 let count = 0;
                 if (data.webcams) {
@@ -120,29 +103,20 @@
                         const { location, images } = cam;
                         if (location && location.latitude && location.longitude) {
                             count++;
-                            viewer.entities.add({
-                                position: Cesium.Cartesian3.fromDegrees(location.longitude, location.latitude, 50),
-                                point: { pixelSize: 8, color: Cesium.Color.GREEN }, 
-                                label: {
-                                    text: '📷', font: '12px sans-serif',
-                                    pixelOffset: new Cesium.Cartesian2(0, -15),
-                                    fillColor: Cesium.Color.GREEN
-                                },
-                                description: `
-                                    <div style="text-align:center; font-family: monospace; background: #000; color: #0f0; padding: 10px; border: 1px solid #0f0;">
-                                        <h3>${location.city || 'موقع غير معروف'}</h3>
-                                        <p>${location.country || ''}</p>
-                                        <img src="${images?.current?.preview || ''}" style="width:100%; max-width:300px; border: 1px solid #0f0;" />
-                                    </div>
-                                `
-                            });
+                            const popupContent = `
+                                <div style="text-align:center;">
+                                    <h3 style="margin:0 0 5px 0;">${location.city || 'كاميرا'}</h3>
+                                    <img src="${images?.current?.preview || ''}" style="width:200px;" />
+                                </div>
+                            `;
+                            L.marker([location.latitude, location.longitude], {
+                                icon: L.divIcon({ className: 'cam-icon', html: '📷', iconSize: [20, 20] })
+                            }).bindPopup(popupContent).addTo(map);
                         }
                     });
                 }
                 el.innerText = count + ' كاميرا';
-            } catch (e) { 
-                el.innerText = 'تعذر الجلب (تحقق من المفتاح)'; 
-            }
+            } catch (e) { el.innerText = 'خطأ في المفتاح'; }
         }
 
         // تشغيل الجلب
@@ -151,7 +125,7 @@
         
         // تحديث تلقائي كل دقيقة
         setInterval(() => { 
-            viewer.entities.removeAll(); 
+            map.eachLayer(function (layer) { if(layer instanceof L.Marker) { map.removeLayer(layer); } });
             fetchFlights(); 
             fetchWebcams(); 
         }, 60000);
