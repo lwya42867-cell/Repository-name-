@@ -10,14 +10,11 @@
 
     <style>
         body { margin: 0; padding: 0; background-color: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
-        
-        /* حاوية الخريطة */
         #map { width: 100vw; height: 100vh; background: #111; }
         
-        /* فلتر لجعل خريطة OSM العادية داكنة جداً */
+        /* فلتر لجعل خريطة OSM داكنة */
         .leaflet-layer { filter: grayscale(100%) invert(100%) contrast(1.2) brightness(0.8) hue-rotate(180deg); }
 
-        /* واجهة الهاكر (HUD) */
         #hud {
             position: absolute; top: 20px; right: 20px;
             background: rgba(0, 20, 0, 0.9); border: 1px solid #0f0;
@@ -29,7 +26,6 @@
         .data-row { font-size: 12px; margin-bottom: 5px; }
         .data-row span { color: #fff; }
         
-        /* تأثير خط المسح */
         .scanline {
             position: absolute; top: 0; left: 0; width: 100%; height: 100px;
             background: linear-gradient(to bottom, rgba(0,255,0,0) 0%, rgba(0,255,0,0.1) 50%, rgba(0,255,0,0) 100%);
@@ -37,11 +33,9 @@
         }
         @keyframes scan { 0% { top: -100px; } 100% { top: 100%; } }
 
-        /* أيقونات مخصصة */
         .plane-icon { font-size: 18px; text-shadow: 0 0 5px #0ff; }
         .cam-icon { font-size: 18px; text-shadow: 0 0 5px #0f0; }
         
-        /* تخصيص النوافذ المنبثقة */
         .leaflet-popup-content-wrapper { background: #000; color: #0f0; border: 1px solid #0f0; border-radius: 5px; }
         .leaflet-popup-tip { background: #0f0; }
         .leaflet-popup-content img { border: 1px solid #0f0; max-width: 100%; margin-top: 10px; }
@@ -59,38 +53,40 @@
     <div id="map"></div>
 
     <script>
-        // 1. تهيئة الخريطة (خريطة OSM العادية)
+        // 1. تهيئة الخريطة
         var map = L.map('map', { zoomControl: false }).setView([30.0, 45.0], 5);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19
         }).addTo(map);
 
-        // 2. جلب الطائرات
+        // 2. جلب الطائرات (مصدر جديد مفتوح: adsb.lol)
         async function fetchFlights() {
             const el = document.getElementById('plane-count');
             try {
-                const res = await fetch('https://opensky-network.org/api/states/all?lamin=12&lomin=35&lamax=42&lomax=60');
+                // نبحث في نطاق 1000 ميل بحري حول العراق (30, 45)
+                const res = await fetch('https://api.adsb.lol/v2/lat/30/lon/45/dist/1000');
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 let count = 0;
-                if (data.states) {
-                    data.states.forEach(state => {
-                        const [icao, callsign, origin, lon, lat, alt] = state;
-                        if (lat && lon) {
+                
+                if (data.ac) {
+                    data.ac.forEach(plane => {
+                        if (plane.lat && plane.lon) {
                             count++;
-                            L.marker([lat, lon], {
+                            let flightName = plane.flight ? plane.flight.trim() : 'غير معروف';
+                            L.marker([plane.lat, plane.lon], {
                                 icon: L.divIcon({ className: 'plane-icon', html: '✈️', iconSize: [20, 20] })
-                            }).bindPopup(`<b>رحلة: ${callsign ? callsign.trim() : 'غير معروف'}</b>`).addTo(map);
+                            }).bindPopup(`<b>رحلة: ${flightName}</b><br>الارتفاع: ${plane.alt_baro} قدم`).addTo(map);
                         }
                     });
                 }
                 el.innerText = count + ' طائرة';
             } catch (e) { 
-                el.innerText = 'فشل الجلب (تجاوز الحد)'; 
+                el.innerText = 'فشل الجلب (تأكد من الإنترنت)'; 
             }
         }
 
-        // 3. جلب الكاميرات
+        // 3. جلب الكاميرات (Windy API)
         const WINDY_API_KEY = "1KJaSrk7x4uofCDDGsZXds7SGhcsuzX2"; 
         const BBOX = "42.1,55.7,16.3,25.6"; 
 
@@ -116,13 +112,15 @@
                 }
                 el.innerText = count + ' كاميرا';
             } catch (e) { 
-                el.innerText = 'فشل الجلب (تحقق من المفتاح)'; 
+                el.innerText = 'فشل (تحقق من المفتاح)'; 
             }
         }
 
+        // تشغيل الجلب
         fetchFlights();
         fetchWebcams();
         
+        // تحديث تلقائي كل دقيقة
         setInterval(() => { 
             map.eachLayer(function (layer) { if(layer instanceof L.Marker) { map.removeLayer(layer); } });
             fetchFlights(); 
