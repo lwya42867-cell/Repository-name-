@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>منظومة المراقبة الشرق الأوسط</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <style>
+        body { margin: 0; padding: 0; background-color: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
+        #cesiumContainer { width: 100%; height: 100vh; }
+        
+        /* واجهة الهاكر (HUD) */
+        #hud {
+            position: absolute; top: 20px; right: 20px;
+            background: rgba(0, 20, 0, 0.8); border: 1px solid #0f0;
+            padding: 15px; color: #0f0; z-index: 999; text-align: right;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+            pointer-events: none;
+            border-radius: 5px;
+        }
+        #hud h1 { margin: 0 0 10px 0; font-size: 18px; text-transform: uppercase; letter-spacing: 2px; }
+        .data-row { font-size: 12px; margin-bottom: 5px; }
+        .data-row span { color: #fff; }
+        
+        /* تأثير خط المسح (Scanline) */
+        .scanline {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100px;
+            background: linear-gradient(to bottom, rgba(0,255,0,0) 0%, rgba(0,255,0,0.1) 50%, rgba(0,255,0,0) 100%);
+            animation: scan 6s linear infinite; z-index: 998; pointer-events: none;
+        }
+        @keyframes scan {
+            0% { top: -100px; }
+            100% { top: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="scanline"></div>
+    <div id="hud">
+        <h1>SYSTEM ONLINE 🟢</h1>
+        <div class="data-row">المنطقة: <span>الشرق الأوسط</span></div>
+        <div class="data-row">الطائرات: <span id="plane-count">جاري الاتصال...</span></div>
+        <div class="data-row">الكاميرات: <span id="cam-count">جاري الاتصال...</span></div>
+        <div class="data-row">الحالة: <span>مراقبة حية</span></div>
+    </div>
+    <div id="cesiumContainer"></div>
+
+    <script>
+        // 1. تهيئة الكرة الأرضية بخريطة داكنة (Dark Matter)
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+                Cesium.UrlTemplateImageryProvider.fromUrl('https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png')
+            ),
+            timeline: false, animation: false, baseLayerPicker: false,
+            geocoder: false, homeButton: true, sceneModePicker: false,
+            navigationHelpButton: false, infoBox: true
+        });
+
+        // ضبط الكاميرا على الشرق الأوسط
+        viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(45.0, 30.0, 3000000)
+        });
+
+        // 2. جلب الطائرات (OpenSky)
+        async function fetchFlights() {
+            try {
+                const res = await fetch('https://opensky-network.org/api/states/all?lamin=12&lomin=35&lamax=42&lomax=60');
+                const data = await res.json();
+                let count = 0;
+                if (data.states) {
+                    data.states.forEach(state => {
+                        const [icao, callsign, origin, lon, lat, alt] = state;
+                        if (lat && lon) {
+                            count++;
+                            viewer.entities.add({
+                                position: Cesium.Cartesian3.fromDegrees(lon, lat, alt || 10000),
+                                point: { pixelSize: 6, color: Cesium.Color.CYAN },
+                                label: {
+                                    text: callsign ? callsign.trim() : '✈️',
+                                    font: '10px monospace', fillColor: Cesium.Color.CYAN,
+                                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                                    pixelOffset: new Cesium.Cartesian2(0, -10)
+                                }
+                            });
+                        }
+                    });
+                }
+                document.getElementById('plane-count').innerText = count + ' طائرة';
+            } catch (e) { 
+                document.getElementById('plane-count').innerText = 'تعذر جلب الطائرات'; 
+            }
+        }
+
+        // 3. جلب الكاميرات (Windy API)
+        const WINDY_API_KEY = "1KJaSrk7x4uofCDDGsZXds7SGhcsuzX2"; // المفتاح الخاص بك
+        const BBOX = "42.1,55.7,16.3,25.6"; // شمال، شرق، جنوب، غرب
+
+        async function fetchWebcams() {
+            try {
+                const url = `https://api.windy.com/webcams/api/v3/webcams?bbox=${BBOX}&limit=100&include=images,location&lang=ar`;
+                const res = await fetch(url, {
+                    headers: { 'x-windy-api-key': WINDY_API_KEY }
+                });
+                const data = await res.json();
+                let count = 0;
+                if (data.webcams) {
+                    data.webcams.forEach(cam => {
+                        const { location, images } = cam;
+                        if (location && location.latitude && location.longitude) {
+                            count++;
+                            viewer.entities.add({
+                                position: Cesium.Cartesian3.fromDegrees(location.longitude, location.latitude, 50),
+                                point: { pixelSize: 8, color: Cesium.Color.LIME },
+                                label: {
+                                    text: '📷', font: '12px sans-serif',
+                                    pixelOffset: new Cesium.Cartesian2(0, -15),
+                                    fillColor: Cesium.Color.LIME
+                                },
+                                description: `
+                                    <div style="text-align:center; font-family: monospace; background: #000; color: #0f0; padding: 10px; border: 1px solid #0f0;">
+                                        <h3>${location.city || 'موقع غير معروف'}</h3>
+                                        <p>${location.country || ''}</p>
+                                        <img src="${images?.current?.preview || ''}" style="width:100%; max-width:300px; border: 1px solid #0f0;" />
+                                    </div>
+                                `
+                            });
+                        }
+                    });
+                }
+                document.getElementById('cam-count').innerText = count + ' كاميرا';
+            } catch (e) { 
+                document.getElementById('cam-count').innerText = 'تعذر جلب الكاميرات'; 
+            }
+        }
+
+        fetchFlights();
+        fetchWebcams();
+        
+        setInterval(() => { 
+            viewer.entities.removeAll(); 
+            fetchFlights(); 
+            fetchWebcams(); 
+        }, 60000);
+    </script>
+</body>
+</html>
